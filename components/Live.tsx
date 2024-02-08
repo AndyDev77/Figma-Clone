@@ -1,19 +1,74 @@
-import { useMyPresence, useOthers } from "@/liveblocks.config";
-import LiveCursors from "./cursor/LiveCursors";
+"use client";
+
 import { useCallback, useEffect, useState } from "react";
+
+import {
+  useBroadcastEvent,
+  useEventListener,
+  useMyPresence,
+  useOthers,
+} from "@/liveblocks.config";
+import useInterval from "@/hooks/useInterval";
+import { CursorMode, CursorState, Reaction, ReactionEvent } from "@/types/type";
+import FlyingReaction from "./reaction/FlyingReaction";
 import CursorChat from "./cursor/CursorChat";
-import { CursorMode, CursorState, Reaction } from "@/types/type";
 import ReactionSelector from "./reaction/ReactionButton";
+import LiveCursors from "./cursor/LiveCursors";
 
 const Live = () => {
   const others = useOthers();
   const [{ cursor }, updateMyPresence] = useMyPresence() as any;
 
-  const [cursorState, setCursorState] = useState({
+  const [cursorState, setCursorState] = useState<CursorState>({
     mode: CursorMode.Hidden,
   });
 
-  const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [reactions, setReaction] = useState<Reaction[]>([]);
+
+  const broadcast = useBroadcastEvent();
+
+  useInterval(() => {
+    setReaction((reaction) => reaction.filter((r) => r.timestamp > Date.now() - 4000))
+
+  }, 1000)
+
+  useInterval(() => {
+    if (
+      cursorState.mode === CursorMode.Reaction &&
+      cursorState.isPressed &&
+      cursor
+    ) {
+      setReaction((reactions) =>
+        reactions.concat([
+          {
+            point: { x: cursor.x, y: cursor.y },
+            value: cursorState.reaction,
+            timestamp: Date.now(),
+          },
+        ])
+      );
+
+      broadcast({
+        x: cursor.x,
+        y: cursor.y,
+        value: cursorState.reaction,
+      });
+    }
+  }, 100);
+
+  useEventListener((eventData) => {
+    const event = eventData.event as ReactionEvent;
+
+    setReaction((reactions) =>
+      reactions.concat([
+        {
+          point: { x: event.x, y: event.y },
+          value: event.value,
+          timestamp: Date.now(),
+        },
+      ])
+    );
+  });
 
   const handlePointerMove = useCallback((event: React.PointerEvent) => {
     event.preventDefault();
@@ -47,13 +102,16 @@ const Live = () => {
     );
   }, []);
 
-  const handlePointerUp = useCallback(() => {
-    setCursorState((state: CursorState) =>
-      cursorState.mode === CursorMode.Reaction
-        ? { ...state, isPressed: false }
-        : state
-    );
-  }, [cursorState.mode, setCursorState]);
+  const handlePointerUp = useCallback(
+    (event: React.PointerEvent) => {
+      setCursorState((state: CursorState) =>
+        cursorState.mode == CursorMode.Reaction
+          ? { ...state, isPressed: true }
+          : state
+      );
+    },
+    [cursorState.mode, setCursorState]
+  );
 
   useEffect(() => {
     const onKeyUp = (e: KeyboardEvent) => {
@@ -86,14 +144,33 @@ const Live = () => {
     };
   }, [updateMyPresence]);
 
+  const setReactions = useCallback((reaction: string) => {
+    setCursorState({
+      mode: CursorMode.Reaction,
+      reaction,
+      isPressed: false,
+    });
+  }, []);
+
   return (
     <div
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
       onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
       className="h-[100vh] w-full flex justify-center items-center text-center"
     >
       <h1 className="text-2xl text-white">Livebooks Figma Clone</h1>
+
+      {reactions.map((r) => (
+        <FlyingReaction
+          key={r.timestamp.toString()}
+          x={r.point.x}
+          y={r.point.y}
+          timestamp={r.timestamp}
+          value={r.value}
+        />
+      ))}
 
       {cursor && (
         <CursorChat
@@ -107,7 +184,7 @@ const Live = () => {
       {cursorState.mode === CursorMode.ReactionSelector && (
         <ReactionSelector
           setReaction={(reaction) => {
-            setReactions(reaction);
+            <ReactionSelector setReaction={setReactions} />;
           }}
         />
       )}
